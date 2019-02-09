@@ -1,0 +1,229 @@
+---
+title: 'Reproducible Research: Course Project 2'
+author: "Rhys Hewer"
+date: "22 August 2018"
+output:
+  html_document:
+    keep_md: yes
+---
+
+# Analysis of Storm Impact on Fatalities, Injuries and Damage Costs.
+
+## Synopsis
+
+The U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+This analysis focuses on analysing the most impactful storms and weather events with respect to fatalities, injuries and economic damage.
+
+Particularly, the exercise is to answer the questions:
+
+* Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+* Across the United States, which types of events have the greatest economic consequences?
+
+The analysis will show tornadoes to be the most damaging to people and floods to have the greatest economic impact.
+
+## Data Processing
+
+First steps is to load the relevant libraries
+
+```{r message=FALSE}
+##load libraries
+library(readr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(tidyr)
+```
+
+Then to download and read the data.
+
+```{r message=FALSE, cache=TRUE}
+##download & read data
+url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(url, destfile = "stormdata.csv.bz2")
+data <- read_csv("stormdata.csv.bz2")
+```
+
+Let's narrow down the data to just the information that we will need for the analysis. I have chosen variables which relate to health and economics.
+
+```{r echo=TRUE}
+##Select just the data required to answer the questions
+data <- data %>% select("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+
+kable(head(data)) %>%
+        kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+  
+Tidy data is:
+
+* Each variable forms a column.
+* Each observation forms a row.
+* Each type of observational unit forms a table.
+  
+The data is not tidy. "FATALITIES" and "INJURIES" are descriptions of a type of health effect and should be values within a variable. "PROPDMG" and "CROPDMG" are descriptions of a type of damage and should be values within a variable.
+
+Health damage and economic damage are different observational units.
+
+As such, data to be tidied so that variable "effect" shows the type of health effect of the event (fatality, injury) accompanied by the number of the effect in "number", stored in one table. "type" shows the type of damage done (property/crops) accompanied by the cost of that damage in "cost" stored in a different table.
+
+#### Health data processing
+
+```{r echo=TRUE}
+##Tidy health related data
+health <- data %>% 
+        gather(FATALITIES, INJURIES, key = effect, value = number) %>%
+        select(EVTYPE, effect, number)
+
+healthHarm <- health %>% group_by(EVTYPE, effect) %>% 
+        summarise(total = sum(number)) 
+```
+
+#### Economic data processing
+
+The values in "PROPDMGEXP" and "CROPDMGEXP" are multiplication factors for the "PROPDMG" and "CROPDMG" variables. Information sourced from here: https://rpubs.com/flyingdisc/PROPDMGEXP
+
+As such, we need to convert letter codes to the multiplication factors and multiply out the damage variables to get to the true damage costs.
+
+```{r echo=TRUE}
+##Select economic data
+econ <-data %>% select("EVTYPE", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+
+##Change letter code for mulitplication factor for PROPDMGEXP
+econ$PROPDMGEXP <- econ$PROPDMGEXP %>% recode(
+        "K" = 10^3,
+        "M" = 10^6,
+        "B" = 10^9,
+        "m" = 10^6,
+        "+" = 1,
+        "0" = 10,
+        "5" = 10,
+        "6" = 10,
+        "?" = 10,
+        "4" = 10,
+        "2" = 10,
+        "3" = 10,
+        "h" = 10^2,
+        "7" = 10,
+        "H" = 10^2,
+        "-" = 0,
+        "1" = 10,
+        "8" = 10)
+
+econ$PROPDMGEXP[is.na(econ$PROPDMGEXP)] <- 0
+
+##Change letter code for mulitplication factor for CROPDMGEXP
+econ$CROPDMGEXP <- econ$CROPDMGEXP %>% recode(
+        "K" = 10^3,
+        "M" = 10^6,
+        "B" = 10^9,
+        "m" = 10^6,
+        "0" = 10,
+        "?" = 10,
+        "2" = 10,
+        "k" = 10^3)
+
+econ$CROPDMGEXP[is.na(econ$CROPDMGEXP)] <- 0
+
+##create total columns for property and crop damage
+econ <- econ %>% mutate(propCost = PROPDMG * PROPDMGEXP)
+econ <- econ %>% mutate(cropCost = CROPDMG * CROPDMGEXP)
+
+econ <- econ %>% select("EVTYPE", "propCost", "cropCost")
+```
+
+We still need to tidy the economic data as mentioned previously.
+
+```{r echo=TRUE}
+##Tidy economic data
+econ <- econ %>% gather(propCost, cropCost, key = "type", value = "cost")
+```
+
+## Results  
+
+#### Health Results
+
+Let's look at the top 10 causes of fatalities
+
+```{r echo=TRUE}
+##fatality results
+hhfat <- healthHarm %>%
+        filter(effect == "FATALITIES") %>%
+        arrange(desc(total)) %>%
+        head(10)
+
+##Plot fatalities
+hf <- ggplot(hhfat, aes(reorder(EVTYPE, total), total)) + 
+        geom_col(fill ="#5489dd") +
+        coord_flip() +
+        ylab("Fatalities") + 
+        xlab("Event") +
+        ggtitle("Fatalities per weather event")
+print(hf)
+```
+
+Description: Top 10 weather event causes of fatalities.
+
+
+Let's look at the top 10 causes of injuries
+
+```{r echo=TRUE}
+##Injury results
+hhinj <- healthHarm %>% 
+        filter(effect == "INJURIES") %>%
+        arrange(desc(total)) %>%
+        head(10)
+
+##Plot Injuries
+hi <- ggplot(hhinj, aes(reorder(EVTYPE, total), total)) + 
+        geom_col(fill = "#7d8e39") + 
+        coord_flip() +
+        ylab("Injuries") + 
+        xlab("Event") +
+        ggtitle("Injuries per weather event")
+print(hi)
+```
+
+Description: Top 10 weather event causes of injuries
+
+#### Health conclusions
+
+* Tornado is the biggest killer, with a fatality rate about 3 times as high as the number 2 cause.
+* Tornado is also the most injurious, causing 10 times as many injuries as the number 2 cause.
+
+The overall conclusion is that Tornadoes are the types of events that are most harmful to population health.  
+
+#### Economic Results
+
+Lets sum the crop and property costs for a total cost variable and look at the top 10.
+
+```{r echo=TRUE}
+##Economic totals
+ecSum <- econ %>% group_by(EVTYPE, type) %>%
+        summarise(cost = sum(cost)) 
+
+
+ecTot <- ecSum %>% group_by(EVTYPE) %>%
+        summarise(cost = sum(cost)) %>%
+        arrange(desc(cost)) %>%
+        head(10)
+
+##convert to $billions
+ecTot$cost <- ecTot$cost/(10^9)
+
+##Plot economic costs
+ec <- ggplot(ecTot, aes(reorder(EVTYPE, cost), cost)) + 
+        geom_col(fill = "#855596") +
+        coord_flip() +
+        ylab("Cost ($Billion)") + 
+        xlab("Event") +
+        ggtitle("Total cost of damage per weather event (Top 10)")
+print(ec)
+```
+
+Description: Top 10 most economically damaging weather events.
+
+#### Economic conclusions
+
+* Floods are the type of event to have the greatest economic consequences, about twice as costly as the number 2 cause.
+
